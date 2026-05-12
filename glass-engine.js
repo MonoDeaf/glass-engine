@@ -13,16 +13,16 @@ const Surfaces = {
 };
 
 const config = {
-    radius: 16,
-    blur: 2,
+    radius: 24,
+    blur: 1,
     glassThickness: 85,
     bezelWidth: 45,
     refractiveIndex: 1.75,
-    specularOpacity: 0.5,
+    specularOpacity: 0.05,
     specularAngle: 90,
     brightness: 0.85,
     surfaceType: 'convex',
-    pixelRatio: 1 
+    resolutionScale: 0.7
 };
 
 function calculateDisplacementArray(cfg = config) {
@@ -84,21 +84,16 @@ function generateMapImages(targetWidth, targetHeight, cfg = config) {
     const precomputed = calculateDisplacementArray(cfg);
     const maxDisplacement = Math.max(...precomputed.map(Math.abs)) || 1;
     
-    const pr = cfg.pixelRatio;
-    const w = Math.round(targetWidth * pr);
-    const h = Math.round(targetHeight * pr);
+    // Using resolutionScale to drastically reduce canvas size and overhead
+    const pr = cfg.resolutionScale || 0.5;
+    const w = Math.max(1, Math.round(targetWidth * pr));
+    const h = Math.max(1, Math.round(targetHeight * pr));
     
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: true });
     const imageData = ctx.createImageData(w, h);
     const data = new Uint32Array(imageData.data.buffer);
-
-    const sCanvas = document.createElement('canvas');
-    sCanvas.width = w; sCanvas.height = h;
-    const sCtx = sCanvas.getContext('2d');
-    const sImageData = sCtx.createImageData(w, h);
-    const sData = new Uint32Array(sImageData.data.buffer);
 
     const radius = Math.min(cfg.radius * pr, w / 2, h / 2);
     const bezel = Math.max(radius, Math.min(cfg.bezelWidth * pr, w / 2, h / 2));
@@ -140,26 +135,24 @@ function generateMapImages(targetWidth, targetHeight, cfg = config) {
                 const dX = ((-cos * dispValue) / maxDisplacement);
                 const dY = ((-sin * dispValue) / maxDisplacement);
 
+                // R: X-displacement, G: Y-displacement, B: Specular intensity
                 const r = Math.round(128 + dX * 127 * opacity);
                 const g = Math.round(128 + dY * 127 * opacity);
-                data[idx] = (255 << 24) | (0 << 16) | (g << 8) | r;
-
+                
                 const dot = Math.max(0, cos * specVec[0] + (-sin) * specVec[1]);
                 const specEdgeDist = Math.max(0, 1 - (distBorder / (1.0 * pr)));
                 const coeff = dot * Math.sqrt(1 - Math.pow(1 - specEdgeDist, 2));
-                const color = Math.round(255 * coeff);
-                const alpha = Math.round(color * coeff * opacity);
-                sData[idx] = (alpha << 24) | (color << 16) | (color << 8) | color;
+                const b = Math.round(255 * coeff * opacity);
+
+                data[idx] = (255 << 24) | (b << 16) | (g << 8) | r;
             } else {
                 data[idx] = (255 << 24) | (0 << 16) | (128 << 8) | 128;
-                sData[idx] = 0;
             }
         }
     }
     ctx.putImageData(imageData, 0, 0);
-    sCtx.putImageData(sImageData, 0, 0);
 
-    return { displacement: canvas.toDataURL(), specular: sCanvas.toDataURL(), maxScale: maxDisplacement };
+    return { combined: canvas.toDataURL('image/png'), maxScale: maxDisplacement };
 }
 
 function updateAllGlass() {
@@ -168,6 +161,7 @@ function updateAllGlass() {
     if (!container) {
         container = document.createElement('div');
         container.id = 'glass-filters-container';
+        container.style.cssText = 'position:absolute; width:0; height:0; overflow:hidden; visibility:hidden; pointer-events:none;';
         document.body.appendChild(container);
     }
     container.innerHTML = ''; 
@@ -178,24 +172,26 @@ function updateAllGlass() {
 
         const localConfig = { ...config };
         
-        const attrRad = el.getAttribute('Radius');
-        const attrBez = el.getAttribute('Bezel');
-        const attrThk = el.getAttribute('Thickness');
-        const attrBlr = el.getAttribute('Blur');
-        const attrSha = el.getAttribute('Shadow');
-        const attrRef = el.getAttribute('Refraction');
-        const attrSpA = el.getAttribute('Specular-amount');
-        const attrSpG = el.getAttribute('Specular-angle');
-        const attrBrt = el.getAttribute('Backdrop-brightness') || el.getAttribute('Brightness');
+        const attrRad = el.getAttribute('radius');
+        const attrBez = el.getAttribute('bezel');
+        const attrThk = el.getAttribute('thickness');
+        const attrBlr = el.getAttribute('blur');
+        const attrSha = el.getAttribute('shadow');
+        const attrRef = el.getAttribute('refraction');
+        const attrSpA = el.getAttribute('specular-amount');
+        const attrSpG = el.getAttribute('specular-angle');
+        const attrBrt = el.getAttribute('backdrop-brightness') || el.getAttribute('brightness');
 
-        if (attrRad) localConfig.radius = parseFloat(attrRad);
-        if (attrBez) localConfig.bezelWidth = parseFloat(attrBez);
-        if (attrThk) localConfig.glassThickness = parseFloat(attrThk);
-        if (attrBlr) localConfig.blur = parseFloat(attrBlr);
-        if (attrRef) localConfig.refractiveIndex = parseFloat(attrRef);
-        if (attrSpA) localConfig.specularOpacity = parseFloat(attrSpA);
-        if (attrSpG) localConfig.specularAngle = parseFloat(attrSpG);
-        if (attrBrt) localConfig.brightness = parseFloat(attrBrt);
+        const isValidValue = (v) => v !== null && v !== undefined && v !== 'null';
+
+        if (isValidValue(attrRad)) localConfig.radius = parseFloat(attrRad);
+        if (isValidValue(attrBez)) localConfig.bezelWidth = parseFloat(attrBez);
+        if (isValidValue(attrThk)) localConfig.glassThickness = parseFloat(attrThk);
+        if (isValidValue(attrBlr)) localConfig.blur = parseFloat(attrBlr);
+        if (isValidValue(attrRef)) localConfig.refractiveIndex = parseFloat(attrRef);
+        if (isValidValue(attrSpA)) localConfig.specularOpacity = parseFloat(attrSpA);
+        if (isValidValue(attrSpG)) localConfig.specularAngle = parseFloat(attrSpG);
+        if (isValidValue(attrBrt)) localConfig.brightness = parseFloat(attrBrt);
         
         if (attrSha) {
             el.style.boxShadow = `0 4px ${parseFloat(attrSha)}px rgba(0,0,0,0.4)`;
@@ -212,12 +208,14 @@ function updateAllGlass() {
                         <feFuncR type="linear" slope="${localConfig.brightness}" />
                         <feFuncG type="linear" slope="${localConfig.brightness}" />
                         <feFuncB type="linear" slope="${localConfig.brightness}" />
+                        <feFuncA type="identity" />
                     </feComponentTransfer>
-                    <feImage href="${maps.displacement}" x="0" y="0" width="${rect.width}" height="${rect.height}" result="disp" preserveAspectRatio="none" />
-                    <feImage href="${maps.specular}" x="0" y="0" width="${rect.width}" height="${rect.height}" result="spec" preserveAspectRatio="none" />
-                    <feDisplacementMap in="brightened" in2="disp" scale="${maps.maxScale}" xChannelSelector="R" yChannelSelector="G" result="displaced" />
-                    <feColorMatrix in="spec" type="luminanceToAlpha" result="specA" />
-                    <feComponentTransfer in="specA" result="specO"><feFuncA type="linear" slope="${localConfig.specularOpacity}" /></feComponentTransfer>
+                    <feImage href="${maps.combined}" x="0" y="0" width="${rect.width}" height="${rect.height}" result="map" preserveAspectRatio="none" />
+                    <feDisplacementMap in="brightened" in2="map" scale="${maps.maxScale}" xChannelSelector="R" yChannelSelector="G" result="displaced" />
+                    
+                    <!-- Extracting specular from Blue channel of combined map -->
+                    <feColorMatrix in="map" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 1 0 0" result="specWhite" />
+                    <feComponentTransfer in="specWhite" result="specO"><feFuncA type="linear" slope="${localConfig.specularOpacity}" /></feComponentTransfer>
                     <feFlood flood-color="white" result="white" />
                     <feComposite in="white" in2="specO" operator="in" result="specMask" />
                     <feComposite in="specMask" in2="displaced" operator="over" />
@@ -242,7 +240,7 @@ function updateAllGlass() {
     });
 }
 
-window.GlassEngine = { config, updateAllGlass, generateMapImages };
+window.GlassEngine = { config, updateAllGlass, generateMapImages, TARGET_CLASS };
 
 window.addEventListener('load', updateAllGlass);
 window.addEventListener('resize', () => { clearTimeout(window.gRT); window.gRT = setTimeout(updateAllGlass, 150); });
